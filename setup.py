@@ -27,6 +27,7 @@ setup(
     author_email="https://www.autodesk.com/support",
     url="https://github.com/shotgunsoftware/python-api",
     license=license,
+    install_requires=["aiohttp>=3.8,<4"],
     packages=find_packages(exclude=("tests",)),
     script_args=sys.argv[1:],
     include_package_data=True,

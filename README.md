@@ -21,6 +21,24 @@ Some useful direct links:
 * [Data Types](http://developer.shotgridsoftware.com/python-api/reference.html#data-types)
 * [Filter Syntax](http://developer.shotgridsoftware.com/python-api/reference.html#filter-syntax)
 
+## Asynchronous client
+
+An aiohttp-backed `AsyncShotgun` client is available alongside the synchronous
+`Shotgun` client. Use it with `async with` and await API calls:
+
+```python
+import shotgun_api3
+
+async with shotgun_api3.AsyncShotgun(
+    "https://example.shotgrid.autodesk.com", "script_name", "script_key"
+) as sg:
+    shots = await sg.find("Shot", [["project", "is", project]], ["id", "code"])
+```
+
+The asynchronous client currently covers connection management, RPC calls,
+find/find_one, create/update/delete/revive, batch, and summarize. File transfer
+and the remaining convenience methods are not yet available asynchronously.
+
 ## Changelog
 
 You can see the [full history of the Python API on the documentation site](http://developer.shotgridsoftware.com/python-api/changelog.html).

@@ -36,6 +36,7 @@ if sys.version_info < (3, 9):
 
 from .shotgun import (
     Shotgun,
+    AsyncShotgun,
     ShotgunError,
     ShotgunFileDownloadError,  # noqa unused imports
     ShotgunThumbnailNotReady,
