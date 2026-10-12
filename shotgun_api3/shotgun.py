@@ -5095,3 +5095,6 @@ def _optimize_filter_field(
         return [_optimize_filter_field(fv, recursive=False) for fv in field_value]
 
     return field_value
+
+
+from .async_shotgun import AsyncShotgun  # noqa: E402
