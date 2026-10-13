@@ -173,15 +173,23 @@ class AsyncShotgun(Shotgun):
         params: Any,
         include_auth_params: bool = True,
         first: bool = False,
+        auth_params_override: Optional[Dict[str, Any]] = None,
     ) -> Any:
         if include_auth_params:
             await self._ensure_connected()
         elif self._session is None or self._session.closed:
             self._session = self._make_session()
 
-        payload = self._build_payload(
-            method, self._transform_outbound(params), include_auth_params
-        )
+        outbound_params = self._transform_outbound(params)
+        if auth_params_override is None:
+            payload = self._build_payload(
+                method, outbound_params, include_auth_params
+            )
+        else:
+            call_params = [auth_params_override]
+            if outbound_params:
+                call_params.append(outbound_params)
+            payload = {"method_name": method, "params": call_params}
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = {
             "Content-Type": "application/json; charset=utf-8",
@@ -264,6 +272,7 @@ class AsyncShotgun(Shotgun):
         retired_only: bool = False,
         include_archived_projects: bool = True,
         additional_filter_presets: Optional[List[Dict[str, Any]]] = None,
+        _auth_params_override: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         results = await self.find(
             entity_type,
@@ -275,6 +284,7 @@ class AsyncShotgun(Shotgun):
             retired_only,
             include_archived_projects=include_archived_projects,
             additional_filter_presets=additional_filter_presets,
+            _auth_params_override=_auth_params_override,
         )
         return results[0] if results else None
 
@@ -290,6 +300,7 @@ class AsyncShotgun(Shotgun):
         page: int = 0,
         include_archived_projects: bool = True,
         additional_filter_presets: Optional[List[Dict[str, Any]]] = None,
+        _auth_params_override: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         await self._ensure_connected()
         if not isinstance(limit, int) or limit < 0:
@@ -333,14 +344,18 @@ class AsyncShotgun(Shotgun):
                 page = 1
         if page:
             params["paging"]["current_page"] = page
-            result = await self._rpc("read", params)
+            result = await self._rpc(
+                "read", params, auth_params_override=_auth_params_override
+            )
             return self._parse_records(result.get("entities", []))
 
         params[paging_param] = True
         records = []
         params["paging"]["current_page"] = 1
         while True:
-            result = await self._rpc("read", params)
+            result = await self._rpc(
+                "read", params, auth_params_override=_auth_params_override
+            )
             records.extend(result.get("entities", []))
             if limit and len(records) >= limit:
                 records = records[:limit]
@@ -464,6 +479,372 @@ class AsyncShotgun(Shotgun):
             calls.append(params)
         records = await self._rpc("batch", calls)
         return self._parse_records(records)
+
+    async def work_schedule_read(
+        self,
+        start_date: str,
+        end_date: str,
+        project: Optional[Dict[str, Any]] = None,
+        user: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        await self._ensure_connected()
+        if self.server_caps.version < (3, 2, 0):
+            raise ShotgunError(
+                "Work schedule support requires server version 3.2 or higher, "
+                "server is %s" % (self.server_caps.version,)
+            )
+        if not isinstance(start_date, str) or not isinstance(end_date, str):
+            raise ShotgunError(
+                "The start_date and end_date arguments must be strings in YYYY-MM-DD format"
+            )
+        return await self._rpc(
+            "work_schedule_read",
+            dict(start_date=start_date, end_date=end_date, project=project, user=user),
+        )
+
+    async def work_schedule_update(
+        self,
+        date: str,
+        working: bool,
+        description: Optional[str] = None,
+        project: Optional[Dict[str, Any]] = None,
+        user: Optional[Dict[str, Any]] = None,
+        recalculate_field: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        await self._ensure_connected()
+        if self.server_caps.version < (3, 2, 0):
+            raise ShotgunError(
+                "Work schedule support requires server version 3.2 or higher, "
+                "server is %s" % (self.server_caps.version,)
+            )
+        if not isinstance(date, str):
+            raise ShotgunError("The date argument must be string in YYYY-MM-DD format")
+        return await self._rpc(
+            "work_schedule_update",
+            dict(
+                date=date,
+                working=working,
+                description=description,
+                project=project,
+                user=user,
+                recalculate_field=recalculate_field,
+            ),
+        )
+
+    async def export_page(self, page_id: int, format: str, layout_name=None) -> str:
+        return await self._rpc(
+            "export_page",
+            dict(format=format, page_id=page_id, layout_name=layout_name),
+        )
+
+    async def follow(
+        self, user: Dict[str, Any], entity: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        await self._ensure_connected()
+        if self.server_caps.version < (5, 1, 22):
+            raise ShotgunError(
+                "Follow support requires server version 5.2 or higher, "
+                "server is %s" % (self.server_caps.version,)
+            )
+        return await self._rpc("follow", dict(user=user, entity=entity))
+
+    async def unfollow(
+        self, user: Dict[str, Any], entity: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        await self._ensure_connected()
+        if self.server_caps.version < (5, 1, 22):
+            raise ShotgunError(
+                "Follow support requires server version 5.2 or higher, "
+                "server is %s" % (self.server_caps.version,)
+            )
+        return await self._rpc("unfollow", dict(user=user, entity=entity))
+
+    async def followers(self, entity: Dict[str, Any]) -> List[Dict[str, Any]]:
+        await self._ensure_connected()
+        if self.server_caps.version < (5, 1, 22):
+            raise ShotgunError(
+                "Follow support requires server version 5.2 or higher, "
+                "server is %s" % (self.server_caps.version,)
+            )
+        return await self._rpc("followers", {"entity": entity})
+
+    async def following(
+        self,
+        user: Dict[str, Any],
+        project: Optional[Dict[str, Any]] = None,
+        entity_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        await self._ensure_connected()
+        self.server_caps.ensure_user_following_support()
+        params = {"user": user}
+        if project:
+            params["project"] = project
+        if entity_type:
+            params["entity_type"] = entity_type
+        return await self._rpc("following", params)
+
+    async def schema_entity_read(
+        self, project_entity: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        await self._ensure_connected()
+        params = self._add_project_param({}, project_entity)
+        return await self._rpc("schema_entity_read", params or None)
+
+    async def schema_read(
+        self, project_entity: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        await self._ensure_connected()
+        params = self._add_project_param({}, project_entity)
+        return await self._rpc("schema_read", params or None)
+
+    async def schema_field_read(
+        self,
+        entity_type: str,
+        field_name: Optional[str] = None,
+        project_entity: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        await self._ensure_connected()
+        params = {"type": entity_type}
+        if field_name:
+            params["field_name"] = field_name
+        params = self._add_project_param(params, project_entity)
+        return await self._rpc("schema_field_read", params)
+
+    async def schema_field_create(
+        self,
+        entity_type: str,
+        data_type: str,
+        display_name: str,
+        properties: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        params = {
+            "type": entity_type,
+            "data_type": data_type,
+            "properties": [{"property_name": "name", "value": display_name}],
+        }
+        params["properties"].extend(
+            self._dict_to_list(
+                properties, key_name="property_name", value_name="value"
+            )
+        )
+        return await self._rpc("schema_field_create", params)
+
+    async def schema_field_update(
+        self,
+        entity_type: str,
+        field_name: str,
+        properties: Dict[str, Any],
+        project_entity: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        params = {
+            "type": entity_type,
+            "field_name": field_name,
+            "properties": [
+                {"property_name": key, "value": value}
+                for key, value in (properties or {}).items()
+            ],
+        }
+        params = self._add_project_param(params, project_entity)
+        return await self._rpc("schema_field_update", params)
+
+    async def schema_field_delete(self, entity_type: str, field_name: str) -> bool:
+        return await self._rpc(
+            "schema_field_delete", {"type": entity_type, "field_name": field_name}
+        )
+
+    async def authenticate_human_user(
+        self, user_login: str, user_password: str, auth_token: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        if not user_login:
+            raise ValueError("Please supply a username to authenticate.")
+        if not user_password:
+            raise ValueError("Please supply a password for the user.")
+        auth = {"user_login": str(user_login), "user_password": str(user_password)}
+        if auth_token:
+            auth["auth_token"] = str(auth_token)
+        return await self.find_one(
+            "HumanUser",
+            [["sg_status_list", "is", "act"], ["login", "is", user_login]],
+            ["id", "login"],
+            "",
+            "all",
+            _auth_params_override=auth,
+        )
+
+    async def update_project_last_accessed(
+        self,
+        project: Dict[str, Any],
+        user: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        await self._ensure_connected()
+        if self.server_caps.version < (5, 3, 20):
+            raise ShotgunError(
+                "update_project_last_accessed requires server version 5.3.20 or "
+                "higher, server is %s" % (self.server_caps.version,)
+            )
+        if not user:
+            login = self.config.sudo_as_login or self.config.user_login
+            if login:
+                user = await self.find_one("HumanUser", [["login", "is", login]])
+        params = {"project_id": project["id"]}
+        if user:
+            params["user_id"] = user["id"]
+        result = await self._rpc(
+            "update_project_last_accessed_by_current_user", params
+        )
+        self._parse_records(result)
+
+    async def note_thread_read(
+        self, note_id: int, entity_fields: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        await self._ensure_connected()
+        if self.server_caps.version < (6, 2, 0):
+            raise ShotgunError(
+                "note_thread requires server version 6.2.0 or higher, "
+                "server is %s" % (self.server_caps.version,)
+            )
+        entity_fields = entity_fields or {}
+        if not isinstance(entity_fields, dict):
+            raise ValueError("entity_fields parameter must be a dictionary")
+        record = await self._rpc(
+            "note_thread_contents",
+            {"note_id": note_id, "entity_fields": entity_fields},
+        )
+        return self._parse_records(record)
+
+    async def text_search(
+        self,
+        text: str,
+        entity_types: Dict[str, Any],
+        project_ids: Optional[List] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        await self._ensure_connected()
+        if self.server_caps.version < (6, 2, 0):
+            raise ShotgunError(
+                "auto_complete requires server version 6.2.0 or higher, "
+                "server is %s" % (self.server_caps.version,)
+            )
+        if not isinstance(entity_types, dict):
+            raise ValueError("entity_types parameter must be a dictionary")
+        api_entity_types = {}
+        for entity_type, filter_list in entity_types.items():
+            if not isinstance(filter_list, (list, tuple)):
+                raise ValueError(
+                    "value of entity_types['%s'] must be a list or tuple."
+                    % entity_type
+                )
+            api_entity_types[entity_type] = _translate_filters(
+                filter_list, filter_operator=None
+            )
+        record = await self._rpc(
+            "query_display_name_cache",
+            {
+                "text": text,
+                "entity_types": api_entity_types,
+                "project_ids": project_ids or [],
+                "max_results": limit,
+            },
+        )
+        return self._parse_records(record)[0]
+
+    async def activity_stream_read(
+        self,
+        entity_type: str,
+        entity_id: int,
+        entity_fields: Optional[Dict[str, Any]] = None,
+        min_id: Optional[int] = None,
+        max_id: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        await self._ensure_connected()
+        if self.server_caps.version < (6, 2, 0):
+            raise ShotgunError(
+                "activity_stream requires server version 6.2.0 or higher, "
+                "server is %s" % (self.server_caps.version,)
+            )
+        entity_fields = entity_fields or {}
+        if not isinstance(entity_fields, dict):
+            raise ValueError("entity_fields parameter must be a dictionary")
+        record = await self._rpc(
+            "activity_stream",
+            {
+                "type": entity_type,
+                "id": entity_id,
+                "max_id": max_id,
+                "min_id": min_id,
+                "limit": limit,
+                "entity_fields": entity_fields,
+            },
+        )
+        return self._parse_records(record)[0]
+
+    async def nav_expand(
+        self, path: str, seed_entity_field=None, entity_fields=None
+    ) -> Any:
+        return await self._rpc(
+            "nav_expand",
+            {
+                "path": path,
+                "seed_entity_field": seed_entity_field,
+                "entity_fields": entity_fields,
+            },
+        )
+
+    async def nav_search_string(
+        self, root_path: str, search_string: str, seed_entity_field=None
+    ) -> Any:
+        return await self._rpc(
+            "nav_search",
+            {
+                "root_path": root_path,
+                "seed_entity_field": seed_entity_field,
+                "search_criteria": {"search_string": search_string},
+            },
+        )
+
+    async def nav_search_entity(
+        self,
+        root_path: str,
+        entity: Dict[str, Any],
+        seed_entity_field: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        return await self._rpc(
+            "nav_search",
+            {
+                "root_path": root_path,
+                "seed_entity_field": seed_entity_field,
+                "search_criteria": {"entity": entity},
+            },
+        )
+
+    async def get_session_token(self) -> str:
+        if self.config.session_token:
+            return self.config.session_token
+        result = await self._rpc("get_session_token", None)
+        session_token = (result or {}).get("session_id")
+        if not session_token:
+            raise RuntimeError("Could not extract session_id from %s" % result)
+        self.config.session_token = session_token
+        return session_token
+
+    async def preferences_read(self, prefs: Optional[List] = None) -> Dict[str, Any]:
+        await self._ensure_connected()
+        if self.server_caps.version < (7, 10, 0):
+            raise ShotgunError(
+                "preferences_read requires server version 7.10.0 or higher, "
+                "server is %s" % (self.server_caps.version,)
+            )
+        return await self._rpc("preferences_read", {"prefs": prefs or []})
+
+    async def user_subscriptions_read(self) -> List:
+        return await self._rpc("user_subscriptions_read", None)
+
+    async def user_subscriptions_create(
+        self, users: List[Dict[str, Union[str, List[str], None]]]
+    ) -> bool:
+        result = await self._rpc("user_subscriptions_create", {"users": users})
+        return isinstance(result, dict) and result.get("status") == "success"
 
     async def summarize(
         self,
